@@ -25,7 +25,7 @@ class MetacalCatalog(FitsFile):
         'mcal_flux_s2n', 'mcal_mag', 'mcal_gpsf', 'mcal_logsb', 'mcal_Tpsf']
 
     # The parent class will check these columns exist.
-    required_columns = ( metacal_columns + 
+    required_columns = ( metacal_columns 
                         + metacalibration_names(metacal_columns) 
                         + other_columns )
 

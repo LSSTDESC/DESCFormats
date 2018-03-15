@@ -18,10 +18,10 @@ class DataFile:
     named by a tag.
 
     """
-    def __init__(self, path, mode, validate=True):
+    def __init__(self, path, mode, validate=True, **kwargs):
         self.path = path
         self.mode = mode
-        self.file = self.open(path, mode)
+        self.file = self.open(path, mode, **kwargs)
         if validate and mode == 'r':
             self.validate()
 
