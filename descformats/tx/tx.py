@@ -35,11 +35,49 @@ class MetacalCatalog(FitsFile):
 class TomographyCatalog(HDFFile):
     required_datasets = ['tomography/bin']
 
+
+
+
 class RandomsCatalog(HDFFile):
     required_datasets = ['randoms/ra', 'randoms/dec', 'randoms/e1', 'randoms/e2']
 
-class DiagnosticMaps(FitsFile):
-    pass
+
+
+
+class DiagnosticMaps(HDFFile):
+    required_datasets = [
+        'maps/depth/value',
+        'maps/depth/pixel',
+        ]
+
+    def read_healpix(self, map_name, return_all=False):
+        import healpy
+        import numpy as np
+        group = self.file[f'maps/{map_name}']
+        nside = group.attrs['nside']
+        npix = healpy.nside2npix(nside)
+        m = np.repeat(healpy.UNSEEN, npix)
+        pix = group['pixel'][:]
+        val = group['value'][:]
+        m[pix] = val
+        if return_all:
+            return m, pix, nside
+        else:
+            return m
+
+    def display_healpix(self, map_name, **kwargs):
+        import healpy
+        import numpy as np
+        m, pix, nside = self.read_healpix(map_name, return_all=True)
+        lon,lat=healpy.pix2ang(nside,pix,lonlat=True)
+        npix=healpy.nside2npix(nside)
+        lon_range = [lon.min()-0.1, lon.max()+0.1]
+        lat_range = [lat.min()-0.1, lat.max()+0.1]
+        title = kwargs.pop('title', map_name)
+        healpy.cartview(m,lonra=lon_range, latra=lat_range, title=title, **kwargs)
+
+
+
 
 class PhotozPDFFile(HDFFile):
     required_datasets = []
