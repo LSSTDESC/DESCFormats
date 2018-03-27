@@ -13,11 +13,12 @@ setup(
     url='https://github.com/LSSTDESC/DESCFormats',
     maintainer='Joe Zuntz',
     license='MIT',
+    python_requires='>=3',
     classifiers=[
         'Intended Audience :: Developers',
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: MIT License',
         'Programming Language :: Python :: 3.6',
     ],
-    packages=['descformats'],
+    packages=['descformats', 'descformats.tx'],
 )
