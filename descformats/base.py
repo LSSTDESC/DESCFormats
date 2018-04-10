@@ -52,7 +52,7 @@ class HDFFile(DataFile):
     requires an HDF5 library installation.
 
     """
-    suffix = 'hdf'
+    suffix = 'hdf5'
     required_datasets = []
 
     @classmethod
