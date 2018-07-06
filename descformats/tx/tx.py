@@ -76,6 +76,35 @@ class DiagnosticMaps(HDFFile):
         title = kwargs.pop('title', map_name)
         healpy.cartview(m,lonra=lon_range, latra=lat_range, title=title, **kwargs)
 
+    def read_tangential(self, map_name):
+        import numpy as np
+        group = self.file[f'maps/{map_name}']
+        info = dict(group.attrs)
+        nx = info['nx']
+        ny = info['ny']
+        print(ny,nx)
+        m = np.zeros((ny,nx))
+        m[:,:] = np.nan
+
+        pix = group['pixel'][:]
+        val = group['value'][:]
+        x = pix % nx
+        y = pix // nx
+        m[y,x] = val
+        ra_range = (info['ra_min'], info['ra_max'])
+        dec_range = (info['dec_min'],info['dec_max'])
+        return m, ra_range, dec_range
+
+    def display_tangential(self, map_name, **kwargs):
+        import pylab
+        import numpy as np
+        m, ra_range, dec_range = self.read_tangential(map_name)
+        extent = list(ra_range) + list(dec_range)
+        title = kwargs.pop('title', map_name)
+        pylab.imshow(m, aspect='equal', extent=extent, **kwargs)
+        pylab.title(title)
+        pylab.colorbar()
+        pylab.show()
 
 
 
