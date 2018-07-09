@@ -35,6 +35,16 @@ class MetacalCatalog(FitsFile):
 class TomographyCatalog(HDFFile):
     required_datasets = ['tomography/bin']
 
+    def read_zbins(self):
+        """
+        Read saved redshift bin edges from attributes
+        """
+        d = dict(self.file['tomography'].attrs)
+        tomo.close()
+        nbin = d['nbin']
+        zbins = [(d[f'zmin_{i}'], d[f'zmax_{i}']) for i in range(nbin)]
+        return zbins
+
 
 
 
