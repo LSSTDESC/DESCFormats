@@ -98,10 +98,17 @@ class DiagnosticMaps(HDFFile):
 
         pix = group['pixel'][:]
         val = group['value'][:]
+        w = np.where(pix!=-9999)
+        pix = pix[w]
+        val = val[w]
         x = pix % nx
         y = pix // nx
         m[y,x] = val
-        ra_range = (info['ra_min'], info['ra_max'])
+        ra_min, ra_max = info['ra_min'], info['ra_max']
+        print(ra_min, ra_max)
+        if ra_min > 180 and ra_max<180:
+            ra_min -= 360
+        ra_range = (ra_min, ra_max)
         dec_range = (info['dec_min'],info['dec_max'])
         return m, ra_range, dec_range
 

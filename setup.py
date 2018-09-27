@@ -8,7 +8,7 @@ from setuptools import setup
 
 setup(
     name='descformats',
-    version='0.0.3',
+    version='0.0.4',
     description='Interface wrappers to file types in DESC pipelines',
     url='https://github.com/LSSTDESC/DESCFormats',
     maintainer='Joe Zuntz',
