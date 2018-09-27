@@ -33,7 +33,7 @@ class MetacalCatalog(FitsFile):
 
 
 class TomographyCatalog(HDFFile):
-    required_datasets = ['tomography/bin']
+    required_datasets = []
 
     def read_zbins(self):
         """
@@ -122,5 +122,6 @@ class PhotozPDFFile(HDFFile):
     required_datasets = []
 
 
-class SACCFile(DataFile):
+class SACCFile(HDFFile):
     suffix = 'sacc'
+
