@@ -45,6 +45,9 @@ class DataFile:
         """
         return open(path, mode)
 
+    def close(self):
+        self.file.close()
+
 class HDFFile(DataFile):
     """
     A data file in the HDF5 format.
@@ -71,6 +74,9 @@ class HDFFile(DataFile):
         if missing:
             text = "\n".join(missing)
             raise FileValidationError(f"These data sets are missing from HDF file {self.path}:\n{text}")
+
+    def close(self):
+        self.file.close()
 
 
 class FitsFile(DataFile):
@@ -110,6 +116,9 @@ class FitsFile(DataFile):
         if missing:
             text = "\n".join(missing)
             raise FileValidationError(f"These columns are missing from FITS file {self.path}:\n{text}")
+
+    def close(self):
+        self.file.close()
 
 
 class TextFile(DataFile):
