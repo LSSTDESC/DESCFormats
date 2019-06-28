@@ -1,3 +1,5 @@
+import pathlib
+
 class FileValidationError(Exception):
     pass
 
@@ -140,3 +142,21 @@ class YamlFile(DataFile):
     """
     suffix = 'yml'
 
+class Directory(DataFile):
+    suffix = ''
+
+    @classmethod
+    def open(self, path, mode):
+        p = pathlib.Path(path)
+
+        if mode == "w":
+            if p.exists():
+                shutil.rmtree(p)
+            p.mkdir(parents=True)
+        else:
+            if not p.is_dir():
+                raise ValueError(f"Directory input {path} does not exist")
+        return p
+
+    def close(self):
+        pass
