@@ -91,7 +91,8 @@ disable = [
     "missing-class-docstring",
     "missing-function-docstring",
     "too-few-public-methods",
-    "duplicate-code"
+    "duplicate-code",
+    "too-many-arguments",
 ]
 max-line-length = 110
 max-locals = 50
