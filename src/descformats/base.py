@@ -2,8 +2,15 @@ import pathlib
 import shutil
 import warnings
 
-from ceci.handle import DataHandle
 import tables_io
+import qp
+import yaml
+try:
+    from yaml import CLoader as Loader, CDumper as Dumper
+except ImportError:  # pragma: no cover
+    from yaml import Loader, Dumper
+
+from .handle import DataHandle
 
 
 class FileValidationError(Exception):
@@ -39,10 +46,10 @@ class DataFile(DataHandle):
         instance of the class itself to use as an intermediary for the file.
 
         """
-        return open(path, mode)
+        return open(path, mode, encoding='utf-8')
 
     @classmethod
-    def _close(cls, fileObj):
+    def _close(cls, fileObj, **kwargs):
         fileObj.close()
 
 
@@ -50,7 +57,7 @@ class DataFile(DataHandle):
 class TableHandle(DataHandle):
     """DataHandle for single tables of data
     """
-    suffix = None
+    suffix = "fits"
 
     @classmethod
     def _open(cls, path, mode, **kwargs):
@@ -88,8 +95,8 @@ class Hdf5Handle(TableHandle):
     Using these files requires the h5py package, which in turn
     requires an HDF5 library installation.
     """
-
     suffix = 'hdf5'
+    format = "http://edamontology.org/format_3590"    
     required_datasets = []
 
     @classmethod
@@ -103,6 +110,10 @@ class Hdf5Handle(TableHandle):
         return h5py.File(path, mode, **kwargs)
 
     def validate(self):
+        if self.data is not None:
+            return
+        if self.fileObj is None:
+            self.open(mode='r')
         missing = [name for name in self.required_datasets if name not in self.fileObj]
         if missing:
             text = "\n".join(missing)
@@ -119,6 +130,7 @@ class Hdf5Handle(TableHandle):
 class FitsHandle(TableHandle):
     """DataHandle for a table written to fits"""
     suffix = 'fits'
+    format = "http://edamontology.org/format_2333"    
     required_columns = []
 
     @classmethod
@@ -135,14 +147,20 @@ class FitsHandle(TableHandle):
         Check that all supplied columns exist
         and are in the chosen HDU
         """
-        ext = self.fileObj[hdu]
-        found_cols = ext.get_colnames()
+        if self.data is not None:
+            ext = self.data
+            found_cols = list(ext.keys())
+        elif self.fileObj is None:
+            self.open(mode='r')
+            ext = self.fileObj[hdu]
+            found_cols = ext.get_colnames()
         missing_columns = [col for col in columns if col not in found_cols]
         return missing_columns
 
     def validate(self):
         """Check that the catalog has all the required columns and complain otherwise"""
         # Find any columns that do not exist in the file
+
         missing = self.missing_columns(self.required_columns)
 
         # If there are any, raise an exception that lists them explicitly
@@ -160,6 +178,45 @@ class PqHandle(TableHandle):
         pass
 
 
+class QPHandle(DataHandle):
+    """DataHandle for qp ensembles
+    """
+    suffix = 'hdf5'
+
+    @classmethod
+    def _open(cls, path, mode, **kwargs):
+        """Open and return the associated file
+        Notes
+        -----
+        This will simply open the file and return a file-like object to the caller.
+        It will not read or cache the data
+        """
+        return tables_io.io.io_open(path, mode=mode, **kwargs)  #pylint: disable=no-member
+
+    @classmethod
+    def _read(cls, path, **kwargs):
+        """Read and return the data from the associated file """
+        return qp.read(path)
+
+    @classmethod
+    def _write(cls, data, path, **kwargs):
+        """Write the data to the associatied file """
+        return data.write_to(path)
+
+    @classmethod
+    def _initialize_write(cls, data, path, data_lenght, **kwargs):
+        comm = kwargs.get('communicator', None)
+        return data.initializeHdf5Write(path, data_lenght, comm)
+
+    @classmethod
+    def _write_chunk(cls, data, fileObj, groups, start, end, **kwargs):
+        return data.writeHdf5Chunk(fileObj, start, end)
+
+    @classmethod
+    def _finalize_write(cls, data, fileObj, **kwargs):
+        return data.finalizeHdf5Write(fileObj)
+
+
 HDFFile = Hdf5Handle
 
 
@@ -171,6 +228,19 @@ class TextFile(DataFile):
     A data file in plain text format.
     """
     suffix = 'txt'
+    format = "http://edamontology.org/format_2330"
+    
+    @classmethod
+    def _read(cls, path, **kwargs):
+        """Read and return the data from the associated file """
+        with cls._open(path, mode='r') as fin:
+            return fin.read()
+
+    @classmethod
+    def _write(cls, data, path, **kwargs):
+        """Write the data to the associatied file """
+        with cls._open(path, mode='w') as fout:
+            fout.write(data)
 
 
 class YamlFile(DataFile):
@@ -178,6 +248,19 @@ class YamlFile(DataFile):
     A data file in yaml format.
     """
     suffix = 'yml'
+    format = "http://edamontology.org/format_3750"
+
+    @classmethod
+    def _read(cls, path, **kwargs):
+        """Read and return the data from the associated file """
+        with cls._open(path, mode='r') as fin:
+            return yaml.load(fin, Loader=Loader)
+
+    @classmethod
+    def _write(cls, data, path, **kwargs):
+        """Write the data to the associatied file """
+        with cls._open(path, mode='w') as fout:
+            yaml.dump(data, fout, Dumper=Dumper)
 
 
 class Directory(DataFile):
@@ -197,5 +280,5 @@ class Directory(DataFile):
         return p
 
     @classmethod
-    def _close(cls, fileObj):
+    def _close(cls, fileObj, **kwargs):
         pass
