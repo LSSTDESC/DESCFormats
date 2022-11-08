@@ -10,15 +10,20 @@ import descformats
 from descformats.base import (
     TableHandle,
     Hdf5Handle,
+    HDFFile,
     FitsHandle,
+    FitsFile,
     PqHandle,
+    ParquetFile,
     TextFile,
     YamlFile,
     QPHandle,
     FileValidationError,
     Directory,
+    FileCollection,
+    PNGFile,
 )
-from descformats.data import DataStore, DATA_STORE
+from descformats.data_store import DataStore, DATA_STORE
 from descformats.handle import DataHandle
 
 DATADIR = os.path.abspath(os.path.join(os.path.dirname(descformats.__file__), 'data'))
@@ -27,6 +32,19 @@ DATADIR = os.path.abspath(os.path.join(os.path.dirname(descformats.__file__), 'd
 #    with pytest.raises(ValueError) as errinfo:
 #        df = DataFile('dummy', 'x')
 
+
+def do_data_file(datapath, file_class):
+
+    DATA_STORE().clear()
+
+    with pytest.raises(ValueError) as errinfo:
+        fail = file_class('bad', mode='r')
+    tf = file_class('data', path=datapath)
+    print(tf)
+    assert tf.has_path
+    assert tf.is_written
+    return tf
+    
 
 def do_data_handle(datapath, handle_class):
 
@@ -88,6 +106,14 @@ def test_pq_handle():
     assert handle.fileObj is None
 
 
+def test_pq_file():
+    datapath = os.path.join(DATADIR, 'testdata', 'test_dc2_training_9816.pq')
+    pqfile = do_data_file(datapath, ParquetFile)
+
+    with ParquetFile("pqfile", path=datapath, mode='r') as pqf:
+        assert pqf
+    
+
 def test_hdf5_handle():
     datapath = os.path.join(DATADIR, 'testdata', 'test_dc2_training_9816.hdf5')
     handle = do_data_handle(datapath, Hdf5Handle)
@@ -98,8 +124,7 @@ def test_hdf5_handle():
     handle_chunked = Hdf5Handle("chunked", handle.data, path=datapath_chunked)
     from tables_io.arrayUtils import getGroupInputDataLength, sliceDict, getInitializationForODict
     num_rows = len(handle.data['photometry']['id'])
-    check_num_rows = len(handle()['photometry']['id'])
-    assert num_rows == check_num_rows
+
     chunk_size = 1000
     data = handle.data['photometry']
     init_dict = getInitializationForODict(data)
@@ -115,12 +140,12 @@ def test_hdf5_handle():
             handle_chunked.write_chunk(start, end)
     write_size = handle_chunked.size()
     assert len(handle_chunked.data) <= 1000
-    data_called = handle_chunked()
-    assert len(data_called['id']) == write_size
+    #data_called = handle_chunked()
+    #assert len(data_called['id']) == write_size
     read_chunked = Hdf5Handle("read_chunked", None, path=datapath_chunked)
     data_check = read_chunked.read()
     assert np.allclose(data['id'], data_check['id'])
-    assert np.allclose(data_called['id'], data_check['id'])
+    #assert np.allclose(data_called['id'], data_check['id'])
     os.remove(datapath_chunked)
 
 
@@ -174,50 +199,109 @@ def test_fits_handle():
         assert handle_write.fileObj is None
 
 
+def test_fits_file():
+    datapath = os.path.join(DATADIR, 'testdata', 'output_BPZ_lite.fits')
+    handle = FitsHandle("data", path=datapath)
+    fitsfile = handle.open(mode='r')
+
+    class BadFitsFile(FitsFile):
+        required_columns = ["missing"]
+    
+    with tempfile.TemporaryDirectory() as dirname:
+        fitsfile_out = FitsFile("fits_out", path=os.path.join(dirname, "fits_out.fits"), mode='w')
+        fitsfile_out.fileObj.create_table_hdu(fitsfile[1].read())
+        fitsfile_out.close()
+        fitsfile_read = FitsFile("fits_read", path=os.path.join(dirname, "fits_out.fits"), mode='r')
+        assert np.allclose(fitsfile_read.fileObj[2].read()['xvals'], fitsfile[1].read()['xvals'])
+        fitsfile_read.close()
+        with pytest.raises(FileValidationError):
+            fitsfile_bad = BadFitsFile("fits_bad", path=os.path.join(dirname, "fits_out.fits"), mode='r')
+
+def test_hdf5_file():
+    datapath = os.path.join(DATADIR, 'testdata', 'test_dc2_training_9816.hdf5')
+    handle = Hdf5Handle("data", path=datapath)
+    hdffile = handle.open(mode='r')
+
+    class BadHDFFile(HDFFile):
+        required_datasets = ["missing"]
+    
+    with tempfile.TemporaryDirectory() as dirname:
+        hdffile_out = HDFFile("hdf_out", path=os.path.join(dirname, "hdf_out.hdf"), mode='w')
+        hdffile_out.close()
+        hdffile_read = HDFFile("hdf_read", path=os.path.join(dirname, "hdf_out.hdf"), mode='r')
+        #assert np.allclose(hdffile_out.fileObj[2].read()['xvals'], hdffile[1].read()['xvals'])
+        hdffile_read.close()
+        with pytest.raises(FileValidationError):
+            hdffile_bad = BadHDFFile("hdf_bad", path=os.path.join(dirname, "hdf_out.hdf"), mode='r')
 
 def test_text_file():
     datapath = os.path.join(DATADIR, 'testdata', 'OhYouWill.txt')
-    handle = do_data_handle(datapath, TextFile)
-    textfile = handle.open(mode='r')
+    textfile = do_data_file(datapath, TextFile)
     assert textfile
-    assert handle.fileObj is not None
-    handle.close()
-    assert handle.fileObj is None
+    assert textfile.fileObj is not None
+    textfile.close()
+    assert textfile.fileObj is None
 
 
 def test_yaml_file():
     datapath = os.path.join(DATADIR, 'testdata', 'something.yaml')
-    handle = do_data_handle(datapath, YamlFile)
-    textfile = handle.open(mode='r')
+    textfile = do_data_file(datapath, YamlFile)
     assert textfile
-    assert handle.fileObj is not None
-    handle.close()
-    assert handle.fileObj is None
+    assert textfile.fileObj is not None
+    textfile.close()
+    assert textfile.fileObj is None
 
+    cc = textfile.content.copy()
+
+    with tempfile.TemporaryDirectory() as dirname:
+        tmpyml = os.path.join(dirname, "tempout.yml")
+        with YamlFile("ymlout", path=tmpyml, mode='w') as ymlout:
+            ymlout.write(cc)
+            with pytest.raises(ValueError):
+                ymlout.write(232)
+        with YamlFile("ymlin", path=tmpyml, mode='r') as ymlin:
+            assert ymlin.content == cc
+    
+    for load_mode in ['full', 'safe', 'unsafe']:
+        with YamlFile(f"yaml_{load_mode}", path=datapath, mode='r', load_mode=load_mode) as fin:
+            assert fin.content['name'] == 'Upload Python Package'
+            assert fin.read('name') == 'Upload Python Package'
+            
+    with pytest.raises(ValueError):
+        will_fail = YamlFile("to_fail", path=datapath, mode='r', load_mode='fail')
+        
 
 def test_directory():
     DATA_STORE().clear()
     datapath = os.path.join(DATADIR, 'testdata')
-    handle = Directory("dir", path=datapath)
-
-    with handle.open(mode="r") as directrory:
-        assert directrory
-
+    with Directory("dir", path=datapath) as the_dir:
+        assert the_dir
+    
     with tempfile.TemporaryDirectory() as dirname:
-        handle = Directory("newdir", path=dirname)
-        with handle.open(mode="w") as new_dir:
-            assert new_dir
+        with Directory("newdir", path=dirname, mode='w') as newdir:
+            assert newdir
             assert os.path.isdir(dirname)
-        other_handle = Directory("newdir2", path=dirname)
-        with other_handle.open(mode="w") as new_dir:
-            assert new_dir
+        with Directory("newdir2", path=dirname, mode='r') as newdir:
+            assert newdir
             assert os.path.isdir(dirname)
 
-    handle.close()
-    handle = Directory("dir", path="this/path/better/not/exist")
     with pytest.raises(ValueError):
-        handle.open(mode='r')
-        
+        handle = Directory("dir", path="this/path/better/not/exist")
+
+
+def test_file_collection():
+    DATA_STORE().clear()
+    with tempfile.TemporaryDirectory() as dirname:
+        with FileCollection("newcoll", path=dirname, mode='w') as newdir:
+            assert newdir
+            assert os.path.isdir(dirname)
+            newdir.write_listing(["a.txt", "b.txt"])
+
+        with FileCollection("newcoll_read", path=dirname, mode='r') as newdir:
+            assert newdir
+            assert os.path.isdir(dirname)
+            listing = newdir.read_listing()
+
     
 def test_data_hdf5_iter():
 
@@ -320,5 +404,19 @@ def test_failed_validation():
         th.validate()
 
 
+def test_png_file():
+    
+    DATA_STORE().clear()
+
+    with tempfile.TemporaryDirectory() as dirname:
+        with PNGFile('png', path=os.path.join(dirname, 'test.png'), mode='w') as plt:
+            assert plt
+            with pytest.raises(ValueError):
+                plt.read_provenance()
+            
+        with pytest.raises(ValueError):
+            plt = PNGFile('png', path=os.path.join(dirname, 'test.png'), mode='r')
+
+
 if __name__ == '__main__':
-    test_data_store()
+    test_yaml_file()

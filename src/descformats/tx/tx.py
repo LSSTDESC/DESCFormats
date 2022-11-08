@@ -460,10 +460,6 @@ class FiducialCosmology(YamlFile):
 
         return ccl.Cosmology(**inits)
 
-class QPFile(DataFile):
-    # TODO: Flesh this out
-    suffix = "hdf5"
-
 
 class DiagnosticMaps(HDFFile):
     required_datasets = [

@@ -1,8 +1,10 @@
 import pathlib
 import shutil
 import warnings
-
+import os
+from io import UnsupportedOperation
 import tables_io
+import pickle
 import qp
 import yaml
 try:
@@ -11,53 +13,18 @@ except ImportError:  # pragma: no cover
     from yaml import Loader, Dumper
 
 from .handle import DataHandle
+from .data_file import DataFile
+from .provenance.provenance import Provenance
 
 
 class FileValidationError(Exception):
     pass
 
 
-class DataFile(DataHandle):
-    """
-    A class representing a DataFile to be made by pipeline stages
-    and passed on to subsequent ones.
-
-    DataFile itself should not be instantiated - instead subclasses
-    should be defined for different file types.
-
-    These subclasses are used in the definition of pipeline stages
-    to indicate what kind of file is expected.  The "suffix" attribute,
-    which must be defined on subclasses, indicates the file suffix.
-
-    The open method, which can optionally be overridden, is used by the
-    machinery of the PipelineStage class to open an input our output
-    named by a tag.
-
-    """
-
-    @classmethod
-    def _open(cls, path, mode, **kwargs):
-        """
-        Open a data file.  The base implementation of this function just
-        opens and returns a standard python file object.
-
-        Subclasses can override to either open files using different openers
-        (like fitsio.FITS), or, for more specific data types, return an
-        instance of the class itself to use as an intermediary for the file.
-
-        """
-        return open(path, mode, encoding='utf-8')
-
-    @classmethod
-    def _close(cls, fileObj, **kwargs):
-        fileObj.close()
-
-
-
 class TableHandle(DataHandle):
     """DataHandle for single tables of data
     """
-    suffix = "fits"
+    suffix = "hdf5"
 
     @classmethod
     def _open(cls, path, mode, **kwargs):
@@ -217,10 +184,82 @@ class QPHandle(DataHandle):
         return data.finalizeHdf5Write(fileObj)
 
 
-HDFFile = Hdf5Handle
+class HDFFile(DataFile):
+    supports_parallel_write = True
+    """
+    A data file in the HDF5 format.
+    Using these files requires the h5py package, which in turn
+    requires an HDF5 library installation.
+
+    """
+    suffix = "hdf5"
+    required_datasets = []
+
+    @classmethod
+    def _open(cls, path, mode, **kwargs):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            import h5py
+        # Return an open h5py File
+        fileObj = h5py.File(path, mode, **kwargs)
+        return fileObj
+
+    def validate(self):
+        missing = [name for name in self.required_datasets if name not in self.fileObj]
+        if missing:
+            text = "\n".join(missing)
+            raise FileValidationError(
+                f"These data sets are missing from HDF file {self.path}:\n{text}"
+            )
+
+    def close(self):
+        self.fileObj.close()
 
 
-FitsFile = FitsHandle
+class FitsFile(DataFile):
+    """
+    A data file in the FITS format.
+    Using these files requires the fitsio package.
+    """
+
+    suffix = "fits"
+    required_columns = []
+
+    @classmethod
+    def _open(cls, path, mode, **kwargs):
+        import fitsio
+
+        # Fitsio doesn't have pure 'w' modes, just 'rw'.
+        # Maybe we should check if the file already exists here?
+        if mode == "w":
+            mode = "rw"
+        fileObj = fitsio.FITS(path, mode=mode, **kwargs)
+        return fileObj
+        
+    def missing_columns(self, columns, hdu=1):
+        """
+        Check that all supplied columns exist
+        and are in the chosen HDU
+        """
+        ext = self.fileObj[hdu]
+        found_cols = ext.get_colnames()
+        missing_columns = [col for col in columns if col not in found_cols]
+        return missing_columns
+
+    def validate(self):
+        """Check that the catalog has all the required columns and complain otherwise"""
+        # Find any columns that do not exist in the file
+        missing = self.missing_columns(self.required_columns)
+
+        # If there are any, raise an exception that lists them explicitly
+        if missing:
+            text = "\n".join(missing)
+            raise FileValidationError(
+                f"These columns are missing from FITS file {self.path}:\n{text}"
+            )
+
+    def close(self):
+        self.fileObj.close()
 
 
 class TextFile(DataFile):
@@ -228,39 +267,43 @@ class TextFile(DataFile):
     A data file in plain text format.
     """
     suffix = 'txt'
-    format = "http://edamontology.org/format_2330"
     
-    @classmethod
-    def _read(cls, path, **kwargs):
-        """Read and return the data from the associated file """
-        with cls._open(path, mode='r') as fin:
-            return fin.read()
-
-    @classmethod
-    def _write(cls, data, path, **kwargs):
-        """Write the data to the associatied file """
-        with cls._open(path, mode='w') as fout:
-            fout.write(data)
-
 
 class YamlFile(DataFile):
     """
     A data file in yaml format.
     """
     suffix = 'yml'
-    format = "http://edamontology.org/format_3750"
 
-    @classmethod
-    def _read(cls, path, **kwargs):
-        """Read and return the data from the associated file """
-        with cls._open(path, mode='r') as fin:
-            return yaml.load(fin, Loader=Loader)
+    def __init__(self, tag, path=None, mode='r', extra_provenance=None, validate=True, **kwargs):
+        if mode=='w':
+            mode='a'
+        DataFile.__init__(self, tag, path=path, mode=mode, extra_provenance=extra_provenance, validate=validate, **kwargs)
 
-    @classmethod
-    def _write(cls, data, path, **kwargs):
-        """Write the data to the associatied file """
-        with cls._open(path, mode='w') as fout:
-            yaml.dump(data, fout, Dumper=Dumper)
+    def open(self, **kwargs):
+        DataFile.open(self, **kwargs)
+        if self.mode == 'r':
+            load_mode = kwargs.get('load_mode', 'full')
+            if load_mode == "safe":
+                self.content = yaml.safe_load(self.fileObj)
+            elif load_mode == "full":
+                self.content = yaml.full_load(self.fileObj)
+            elif load_mode == "unsafe":
+                self.content = yaml.unsafe_load(self.fileObj)
+            else:
+                raise ValueError(
+                    f"Unknown value {load_mode} of load_mode. "
+                    "Should be 'safe', 'full', or 'unsafe'"
+                )
+            self.content.pop('provenance', None)
+            
+    def read(self, key):
+        return self.content[key]
+
+    def write(self, d):
+        if not isinstance(d, dict):
+            raise ValueError("Only dicts should be passed to YamlFile.write")
+        yaml.dump(d, self.fileObj)
 
 
 class Directory(DataFile):
@@ -278,6 +321,117 @@ class Directory(DataFile):
             if not p.is_dir():
                 raise ValueError(f"Directory input {path} does not exist")
         return p
+
+    @classmethod
+    def _close(cls, fileObj, **kwargs):
+        pass
+
+
+    def write_provenance(self):
+        """
+        Write provenance information to a new group,
+        called 'provenance'
+        """
+        self.provenance.write(os.path.join(self.path, "provenance.yaml"))
+
+    def read_provenance(self):
+        self.provenance = Provenance()
+        self.provenance.read(os.path.join(self.path, "provenance.yaml"))
+        return self.provenance
+
+
+class FileCollection(Directory):
+    """
+    Represents a grouped bundle of files, for cases where you don't
+    know the exact list in advance.
+    """
+
+    suffix = ""
+
+    def write_listing(self, filenames):
+        """
+        Write a listing file in the directory recording
+        (presumably) the filenames put in it.
+        """
+        fn = self.path_for_file("txpipe_listing.txt")
+        with open(fn, "w") as f:
+            yaml.dump(filenames, f)
+
+    def read_listing(self):
+        """
+        Read a listing file from the directory.
+        """
+        fn = self.path_for_file("txpipe_listing.txt")
+        with open(fn, "r") as f:
+            filenames = yaml.safe_load(f)
+        return filenames
+
+    def path_for_file(self, filename):
+        """
+        Get the path for a file inside the collection.
+        Does not check if the file exists or anything like
+        that.
+        """
+        return str(self.fileObj / filename)
+
+
+class PNGFile(DataFile):
+    suffix = "png"
+
+    @classmethod
+    def _open(cls, path, mode, **kwargs):
+        import matplotlib
+        import matplotlib.pyplot as plt
+
+        if mode != "w":
+            raise ValueError("Reading existing PNG files is not supported")
+        return plt.figure(**kwargs)
+
+    def close(self, **kwargs):
+        import matplotlib
+        import matplotlib.pyplot as plt        
+        self.fileObj.savefig(self.path, metadata=self.provenance.to_string_dict())
+        plt.close(self.fileObj)
+
+    def write_provenance(self):
+        # provenance is written on closing the file
+        pass
+
+    def read_provenance(self):
+        raise ValueError("Reading existing PNG files is not supported")
+
+
+class PickleFile(DataFile):
+    suffix = "pkl"
+
+    @classmethod
+    def _open(cls, path, mode, **kwargs):
+        return open(path, mode + "b")
+
+    def write(self, obj):
+        if self.mode != "w":
+            raise UnsupportedOperation(
+                "Cannot write to pickle file opened in " f"read-only ({self.mode})"
+            )
+        pickle.dump(obj, self.fileObj)
+
+    def read(self):
+        if self.mode != "r":
+            raise UnsupportedOperation(
+                "Cannot read from pickle file opened in " f"write-only ({self.mode})"
+            )
+        return pickle.load(self.fileObj)
+
+
+class ParquetFile(DataFile):
+    suffiz = "pq"
+
+    @classmethod
+    def _open(cls, path, mode, **kwargs):
+        import pyarrow.parquet
+        if mode != "r":
+            raise NotImplementedError("Not implemented writing to Parquet")
+        return pyarrow.parquet.ParquetFile(path)
 
     @classmethod
     def _close(cls, fileObj, **kwargs):

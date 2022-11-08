@@ -1,6 +1,5 @@
-"""Rail-specific data management"""
 
-from .handle import DataHandle
+from .base_data import BaseData
 
 
 class DataStore(dict):
@@ -38,9 +37,9 @@ class DataStore(dict):
         return s
 
     def __setitem__(self, key, value):
-        """ Override the __setitem__ to work with `TableHandle` """
-        if not isinstance(value, DataHandle):
-            raise TypeError(f"Can only add objects of type DataHandle to DataStore, not {type(value)}")
+        """ Override the __setitem__ to work with `BaseData` """
+        if not isinstance(value, BaseData):
+            raise TypeError(f"Can only add objects of type BaseData to DataStore, not {type(value)}")
         check = self.get(key)
         if check is not None and not self.allow_overwrite:
             raise ValueError(

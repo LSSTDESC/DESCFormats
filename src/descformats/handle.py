@@ -1,9 +1,24 @@
 import os
 import copy
 
-class DataHandle:
+from .base_data import BaseData
+
+class DataHandle(BaseData):
     """Class to act as a handle for a bit of data.  Associating it with a file and
-    providing tools to read & write it to that file
+    providing tools to read & write it to that file.  
+
+    These subclasses are used in the definition of pipeline stages
+    to indicate what kind of file is expected.  The "suffix" attribute,
+    which must be defined on subclasses, indicates the file suffix.
+
+    The open(), read(), iterator() methods can be used to access data in slight different
+    ways.
+
+    The write(), initialize_write(), write_chunk() and finalize_write() methods
+    can be used to write data in slightly different ways.
+
+    Sub-classes should override the associated protected classmethods such as
+    _open(), _read(), _write() etc..
 
     Parameters
     ----------
@@ -13,32 +28,18 @@ class DataHandle:
         The associated data
     path : str or None
         The path to the associated file
-    creator : str or None
-        The name of the stage that created this data handle
     """
     suffix = ''
     format = "Not Specified"
 
-    def __init__(self, tag, data=None, path=None, creator=None, provenance=None):
+    def __init__(self, tag, data=None, path=None, extra_provenance=None, **kwargs):
         """Constructor """
-        self.tag = tag
+        BaseData.__init__(self, tag, path=path)
         self.data = data
-        self.path = path
-        self.creator = creator
-        self._provenance = provenance
+        self.extra_provenance = extra_provenance
         self.fileObj = None
         self.groups = None
         self.partial = False
-
-    @property
-    def provenance(self):
-        """Return the provenance"""
-        return self._provenance  # pragma: no cover
-
-    @provenance.setter
-    def provenance(self, provenance):
-        # always copy the provenance
-        self._provenance = copy.deepcopy(provenance)  # pragma: no cover
 
     def open(self, **kwargs):
         """Open and return the associated file
@@ -73,12 +74,6 @@ class DataHandle:
         self.set_data(self._read(self.path, **kwargs))
         return self.data
 
-    def __call__(self, **kwargs):
-        """Return the data, re-reading the fill if needed"""
-        if self.has_data and not self.partial:
-            return self.data
-        return self.read(force=True, **kwargs)
-
     @classmethod
     def _read(cls, path, **kwargs):
         raise NotImplementedError("DataHandle._read")  # pragma: no cover
@@ -86,18 +81,20 @@ class DataHandle:
     def write(self, **kwargs):
         """Write the data to the associatied file """
         if self.path is None:
-            raise ValueError("TableHandle.write() called but path has not been specified")
+            raise ValueError("DataHandle.write() called but path has not been specified")
         if self.data is None:
-            raise ValueError(f"TableHandle.write() called for path {self.path} with no data")
+            raise ValueError(f"DataHandle.write() called for path {self.path} with no data")
         outdir = os.path.dirname(os.path.abspath(self.path))
         if not os.path.exists(outdir):  # pragma: no cover
             os.makedirs(outdir, exist_ok=True)
         ret_val = self._write(self.data, self.path, **kwargs)
-        if self._provenance:  # pragma: no cover
-            self._provenance.write(self.path)
+        self.provenance = self.generate_provenance(self.extra_provenance)
+        self.write_provenance()
         return ret_val
 
-
+    def write_provenance(self):
+        self.provenance.write(self.path)
+    
     @classmethod
     def _write(cls, data, path, **kwargs):
         raise NotImplementedError("DataHandle._write")  #pragma: no cover
@@ -105,7 +102,7 @@ class DataHandle:
     def initialize_write(self, data_lenght, **kwargs):
         """Initialize file to be written by chunks"""
         if self.path is None:  # pragma: no cover
-            raise ValueError("TableHandle.write() called but path has not been specified")
+            raise ValueError("DataHandle.write() called but path has not been specified")
         self.groups, self.fileObj = self._initialize_write(self.data, self.path, data_lenght, **kwargs)
 
     @classmethod
@@ -115,11 +112,10 @@ class DataHandle:
     def write_chunk(self, start, end, **kwargs):
         """Write the data to the associatied file """
         if self.data is None:
-            raise ValueError(f"TableHandle.write_chunk() called for path {self.path} with no data")
+            raise ValueError(f"DataHandle.write_chunk() called for path {self.path} with no data")
         if self.fileObj is None:
-            raise ValueError(f"TableHandle.write_chunk() called before open for {self.tag} : {self.path}")
+            raise ValueError(f"DataHandle.write_chunk() called before open for {self.tag} : {self.path}")
         return self._write_chunk(self.data, self.fileObj, self.groups, start, end, **kwargs)
-
 
     @classmethod
     def _write_chunk(cls, data, fileObj, groups, start, end, **kwargs):
@@ -128,7 +124,7 @@ class DataHandle:
     def finalize_write(self, **kwargs):
         """Finalize and close file written by chunks"""
         if self.fileObj is None:  #pragma: no cover
-            raise ValueError(f"TableHandle.finalize_wite() called before open for {self.tag} : {self.path}")
+            raise ValueError(f"DataHandle.finalize_wite() called before open for {self.tag} : {self.path}")
         self._finalize_write(self.data, self.fileObj, **kwargs)
 
     @classmethod
@@ -164,18 +160,6 @@ class DataHandle:
         """Return true if the data for this handle are loaded """
         return self.data is not None
 
-    @property
-    def has_path(self):
-        """Return true if the path for the associated file is defined """
-        return self.path is not None
-
-    @property
-    def is_written(self):
-        """Return true if the associated file has been written """
-        if self.path is None:
-            return False
-        return os.path.exists(self.path)
-
     def __str__(self):
         s = f"{type(self)} "
         if self.has_path:
@@ -188,13 +172,3 @@ class DataHandle:
             s += "d"
         s += ")"
         return s
-
-    @classmethod
-    def make_name(cls, tag):
-        """Construct and return file name for a particular data tag """
-        if cls.suffix:
-            return f"{tag}.{cls.suffix}"
-        return tag  #pragma: no cover
-
-    def validate(self):
-        """Make sure that the data are valid"""
